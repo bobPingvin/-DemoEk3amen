@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Список товаров</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="/favicon.ico" type="image/png">
+</head>
+<body>
+  <header>
+    <h1>📦 Магазин товаров</h1>
+    <div class="user-panel">
+      <a href="orders.html" id="btn-orders" class="btn-nav">Заказы</a>
+      <span id="user-fio"></span>
+      <button class="btn-exit" onclick="Auth.logout()">Выйти</button>
+    </div>
+    <h1><img src="/uploads/picture.png" alt="logo" style="height:28px; width:28px; border-radius:4px; vertical-align:middle; margin-right:8px;"> Магазин товаров</h1>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <label>Поиск:</label>
+        <input type="text" id="search" placeholder="Поиск по всем полям..." oninput="loadProducts()">
+      </div>
+      <div class="toolbar-group">
+        <label>Поставщик:</label>
+        <select id="filter-supplier" onchange="loadProducts()">
+          <option value="">Все поставщики</option>
+        </select>
+      </div>
+      <div class="toolbar-group">
+        <label>Сортировка по остатку:</label>
+        <select id="sort-qty" onchange="loadProducts()">
+          <option value="">Без сортировки</option>
+          <option value="asc">По возрастанию</option>
+          <option value="desc">По убыванию</option>
+        </select>
+      </div>
+      <button id="btn-add-product" class="btn-nav" style="margin-left:auto; display:none;" onclick="openProductModal()">+ Добавить товар</button>
+    </div>
+
+    <div id="product-list" class="product-list"></div>
+  </main>
+
+  <!-- Модальное окно CRUD товаров -->
+  <div id="product-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3 id="modal-title">Товар</h3>
+      <form id="product-form" onsubmit="saveProduct(event)">
+        <input type="hidden" id="prod-id">
+        <div class="form-group" id="group-id" style="display:none;">
+          <label>ID (только чтение):</label>
+          <input type="text" id="display-id" readonly>
+        </div>
+        <div class="form-group">
+          <label>Артикул:</label>
+          <input type="text" id="prod-article" required>
+        </div>
+        <div class="form-group">
+          <label>Наименование:</label>
+          <input type="text" id="prod-title" required>
+        </div>
+        <div class="form-group">
+          <label>Категория:</label>
+          <select id="prod-category" required></select>
+        </div>
+        <div class="form-group">
+          <label>Производитель:</label>
+          <input type="text" id="prod-manufacturer" required>
+        </div>
+        <div class="form-group">
+          <label>Поставщик:</label>
+          <select id="prod-supplier" required></select>
+        </div>
+        <div class="form-group">
+          <label>Цена:</label>
+          <input type="number" step="0.01" min="0" id="prod-price" required>
+        </div>
+        <div class="form-group">
+          <label>Единица измерения:</label>
+          <input type="text" id="prod-unit" value="шт." required>
+        </div>
+        <div class="form-group">
+          <label>Количество на складе:</label>
+          <input type="number" min="0" id="prod-qty" required>
+        </div>
+        <div class="form-group">
+          <label>Действующая скидка (%):</label>
+          <input type="number" step="0.1" min="0" max="100" id="prod-discount" value="0">
+        </div>
+        <div class="form-group">
+          <label>Описание:</label>
+          <textarea id="prod-desc" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Фотография (разрешение 300х200):</label>
+          <input type="file" id="prod-photo" accept="image/*">
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="btn-del-prod" class="btn-delete" style="display:none;" onclick="deleteCurrentProduct()">Удалить</button>
+          <div>
+            <button type="button" class="btn-exit" onclick="closeProductModal()">Отмена</button>
+            <button type="submit" class="btn-primary" style="width:auto;">Сохранить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="auth.js"></script>
+  <script src="products.js"></script>
+</body>
+</html>

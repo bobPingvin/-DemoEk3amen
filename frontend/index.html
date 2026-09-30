@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Авторизация - Магазин</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="/favicon.ico" type="image/png">
+</head>
+<body>
+  <div class="login-card">
+    <h2>Вход в систему</h2>
+    <div class="form-group">
+      <label>Логин (Email или ID):</label>
+      <input type="text" id="login" placeholder="Логин (например, admin)">
+    </div>
+    <div class="form-group">
+      <label>Пароль:</label>
+      <input type="password" id="password" placeholder="Пароль">
+    </div>
+    <button class="btn-primary" onclick="doLogin()">Войти</button>
+    <button class="btn-guest" onclick="enterGuest()">Войти как гость</button>
+  </div>
+
+  <script src="auth.js"></script>
+  <script>
+    async function doLogin() {
+      const login = document.getElementById('login').value.trim();
+      const password = document.getElementById('password').value.trim();
+      if (!login || !password) return alert('Введите логин и пароль!');
+
+      const r = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ login, password })
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert('Ошибка авторизации: ' + (err.detail || 'Неверный логин или пароль'));
+        return;
+      }
+      const data = await r.json();
+      Auth.set(data);
+      location.href = 'products.html';
+    }
+
+    function enterGuest() {
+      Auth.set({ id: 0, fio: 'Гость', role: 'Гость' });
+      location.href = 'products.html';
+    }
+  </script>
+</body>
+</html>

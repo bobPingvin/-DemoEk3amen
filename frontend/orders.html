@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Управление заказами</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="/favicon.ico" type="image/png">
+</head>
+<body>
+  <header>
+    <h1>📦 Управление заказами</h1>
+    <div class="user-panel">
+      <a href="products.html" class="btn-nav">← К товарам</a>
+      <span id="user-fio"></span>
+      <button class="btn-exit" onclick="Auth.logout()">Выйти</button>
+    </div>
+    <h1><img src="/uploads/picture.png" alt="logo" style="height:28px; width:28px; border-radius:4px; vertical-align:middle; margin-right:8px;"> Магазин товаров</h1>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <button id="btn-add-order" class="btn-nav" style="display:none;" onclick="openOrderModal()">+ Добавить заказ</button>
+    </div>
+    <div id="orders-list" class="product-list"></div>
+  </main>
+
+  <!-- Модалка Заказа -->
+  <div id="order-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3 id="order-modal-title">Заказ</h3>
+      <form id="order-form" onsubmit="saveOrder(event)">
+        <input type="hidden" id="order-id">
+        <div class="form-group">
+          <label>Артикул заказа:</label>
+          <input type="text" id="order-article" required>
+        </div>
+        <div class="form-group">
+          <label>Статус заказа:</label>
+          <select id="order-status" required>
+            <option value="Новый">Новый</option>
+            <option value="В обработке">В обработке</option>
+            <option value="Готов к выдаче">Готов к выдаче</option>
+            <option value="Завершен">Завершен</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Пункт выдачи:</label>
+          <select id="order-point" required></select>
+        </div>
+        <div class="form-group">
+          <label>Дата заказа:</label>
+          <input type="date" id="order-date" required>
+        </div>
+        <div class="form-group">
+          <label>Дата выдачи:</label>
+          <input type="date" id="order-delivery" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="btn-del-order" class="btn-delete" style="display:none;" onclick="deleteCurrentOrder()">Удалить</button>
+          <div>
+            <button type="button" class="btn-exit" onclick="closeOrderModal()">Отмена</button>
+            <button type="submit" class="btn-primary" style="width:auto;">Сохранить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="auth.js"></script>
+  <script src="orders.js"></script>
+</body>
+</html>
