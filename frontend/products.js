@@ -2,13 +2,11 @@ let meta = { product_types: [], suppliers: [] };
 let allProducts = [];
 let currentEditingId = null;
 
-// Загрузка справочников при старте
 async function loadMeta() {
   try {
     const r = await fetch('/api/meta');
     meta = await r.json();
 
-    // Заполняем фильтр поставщиков в шапке
     const supFilter = document.getElementById('filter-supplier');
     if (supFilter && meta.suppliers) {
       supFilter.innerHTML = '<option value="">Все поставщики</option>' +
@@ -95,17 +93,21 @@ async function loadProducts() {
 }
 
 async function openProductModal(id = null) {
+  // Предотвращение открытия более одного окна
+  if (currentEditingId !== null && currentEditingId !== id) {
+    alert('Окно редактирования уже открыто!');
+    return;
+  }
+
   currentEditingId = id;
   const modal = document.getElementById('product-modal');
   const form = document.getElementById('product-form');
   form.reset();
 
-  // Если метаданные еще не загрузились — подгружаем
   if (!meta.product_types || !meta.product_types.length) {
     await loadMeta();
   }
 
-  // Всегда принудительно генерируем <option> перед показом окна
   const catSelect = document.getElementById('prod-category');
   const supSelect = document.getElementById('prod-supplier');
 
@@ -130,6 +132,7 @@ async function openProductModal(id = null) {
       document.getElementById('prod-article').value = p.ArticleNumber || '';
       document.getElementById('prod-title').value = p.Title || '';
       document.getElementById('prod-manufacturer').value = p.Manufacturer || '';
+      // Точное восстановление типа товара
       document.getElementById('prod-category').value = p.ProductTypeID || (meta.product_types[0] ? meta.product_types[0].ID : '');
       document.getElementById('prod-supplier').value = p.SupplierID || (meta.suppliers[0] ? meta.suppliers[0].ID : '');
       document.getElementById('prod-price').value = p.Price || 0;
@@ -175,10 +178,15 @@ async function saveProduct(e) {
     formData.append('photo', fileInput.files[0]);
   }
 
-  const res = await fetch('/api/products', { method: 'POST', body: formData });
+  const res = await fetch('/api/products', {
+    method: 'POST',
+    headers: Auth.getAuthHeaders(),
+    body: formData
+  });
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    alert('Предупреждение: ' + (err.detail || 'Ошибка сохранения'));
+    alert('Предупреждение: ' + (err.detail || 'Ошибка при сохранении данных'));
     return;
   }
   closeProductModal();
@@ -186,11 +194,14 @@ async function saveProduct(e) {
 }
 
 async function deleteCurrentProduct() {
-  if (!confirm('Вы уверены, что хотите удалить товар?')) return;
-  const res = await fetch(`/api/products/${currentEditingId}`, { method: 'DELETE' });
+  if (!confirm('Вы действительно уверены, что хотите удалить товар? Это действие необратимо.')) return;
+  const res = await fetch(`/api/products/${currentEditingId}`, {
+    method: 'DELETE',
+    headers: Auth.getAuthHeaders()
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    alert('Ошибка: ' + (err.detail || 'Не удалось удалить товар'));
+    alert('Ошибка удаления: ' + (err.detail || 'Не удалось выполнить операцию'));
     return;
   }
   closeProductModal();

@@ -350,6 +350,31 @@ CREATE TABLE PickupPoint (
 INSERT INTO PickupPoint VALUES(1,'г. Москва, ул. Ленина, д. 15');
 INSERT INTO PickupPoint VALUES(2,'г. Санкт-Петербург, пр. Мира, д. 40');
 INSERT INTO PickupPoint VALUES(3,'г. Казань, ул. Баумана, д. 7');
+CREATE TABLE Role (
+            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            Title VARCHAR(50) NOT NULL UNIQUE
+        );
+INSERT INTO Role VALUES(1,'Клиент');
+INSERT INTO Role VALUES(2,'Менеджер');
+INSERT INTO Role VALUES(3,'Администратор');
+CREATE TABLE IF NOT EXISTS "User" (
+            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            Login VARCHAR(100) NOT NULL UNIQUE,
+            PasswordHash VARCHAR(255) NOT NULL,
+            LastName VARCHAR(100) NOT NULL,
+            FirstName VARCHAR(100) NOT NULL,
+            Patronymic VARCHAR(100),
+            RoleID INTEGER NOT NULL REFERENCES Role(ID)
+        );
+INSERT INTO User VALUES(1,'admin@shop.ru','3db9680a4340b13e5df8ba9002bf5e17$41983b11c5936b2e8ba5ff6f86a603ae648fa24e0d8d2a5c0101e0aa22f0b40b','Сидоров','Алексей','Николаевич',3);
+INSERT INTO User VALUES(2,'manager@shop.ru','ce10f91f929c097f44569379c83f3272$8206008ae60cddc5c6f46a0e11712f44e81be3a146bafa3f007d5e8e69b0474f','Петров','Петр','Сергеевич',2);
+INSERT INTO User VALUES(3,'client@shop.ru','e863961deea38ee44b122c75e1d7802c$b0cd689059ecb1a89eea7da29633a5af13a40189be24d0ad3f4c2812ea3f51b3','Иванов','Иван','Иванович',1);
+CREATE TABLE UserSession (
+            Token VARCHAR(64) PRIMARY KEY,
+            UserID INTEGER NOT NULL REFERENCES "User"(ID),
+            CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+INSERT INTO UserSession VALUES('7e74719873e6034da4d6d1bd7d1c71f98f56d92cc07cd29c629e24545881365b',1,'2026-09-30 04:55:58');
 INSERT INTO sqlite_sequence VALUES('Direction',5);
 INSERT INTO sqlite_sequence VALUES('Event',20);
 INSERT INTO sqlite_sequence VALUES('Jury',10);
@@ -360,6 +385,8 @@ INSERT INTO sqlite_sequence VALUES('PickupPoint',3);
 INSERT INTO sqlite_sequence VALUES('ProductType',2);
 INSERT INTO sqlite_sequence VALUES('Supplier',1);
 INSERT INTO sqlite_sequence VALUES('Product',1);
+INSERT INTO sqlite_sequence VALUES('Role',3);
+INSERT INTO sqlite_sequence VALUES('User',3);
 CREATE INDEX idx_agent_title       ON Agent(Title);
 CREATE INDEX idx_agent_type        ON Agent(AgentTypeID);
 CREATE INDEX idx_productsale_agent ON ProductSale(AgentID);

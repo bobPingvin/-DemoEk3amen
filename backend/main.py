@@ -1,13 +1,14 @@
+import hashlib
 import os
+import secrets
 import sqlite3
-from typing import Optional
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from typing import List, Optional
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
-from PIL import Image
-
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, '4444.db')
@@ -16,164 +17,188 @@ FRONTEND_DIR = os.path.join(BASE_DIR, '..', 'frontend')
 
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
-# 1. СНАЧАЛА создаем объект приложения FastAPI
-app = FastAPI(title='ИС Магазин товаров')
+# Гарантируем наличие файла-заглушки picture.png
+placeholder_path = os.path.join(UPLOADS_DIR, 'picture.png')
+if not os.path.exists(placeholder_path):
+    img = Image.new('RGB', (300, 200), color=(220, 225, 230))
+    img.save(placeholder_path)
+
+app = FastAPI(title='ИС Управление складом и товарами')
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'], allow_methods=['*'], allow_headers=['*'],
+    allow_origins=['*'],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
-# 2. И ТОЛЬКО ПОТОМ используем декоратор @app.get для favicon
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon():
-    return FileResponse(os.path.join(UPLOADS_DIR, 'picture.png'))
-
-# Заглушка picture.png
-placeholder = os.path.join(UPLOADS_DIR, 'picture.png')
-if not os.path.exists(placeholder):
-    img = Image.new('RGB', (300, 200), color=(225, 230, 235))
-    img.save(placeholder)
-
-app = FastAPI(title='ИС Магазин товаров')
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'], allow_methods=['*'], allow_headers=['*'],
-)
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute('PRAGMA foreign_keys = ON')
     return conn
 
-# Мягкое расширение схемы под критерии демэкзамена без потери исходных данных
-def setup_db():
-    conn = get_conn()
-    cur = conn.cursor()
-    
-    # 1. Проверяем и добавляем столбцы в Product
-    cur.execute("PRAGMA table_info(Product)")
-    cols = [r['name'] for r in cur.fetchall()]
-    
-    if 'SupplierID' not in cols:
-        cur.execute("ALTER TABLE Product ADD COLUMN SupplierID INTEGER REFERENCES Supplier(ID)")
-    if 'Manufacturer' not in cols:
-        cur.execute("ALTER TABLE Product ADD COLUMN Manufacturer VARCHAR(100) DEFAULT 'Россия'")
-    if 'Quantity' not in cols:
-        cur.execute("ALTER TABLE Product ADD COLUMN Quantity INTEGER DEFAULT 10")
-    if 'Discount' not in cols:
-        cur.execute("ALTER TABLE Product ADD COLUMN Discount REAL DEFAULT 0")
-    if 'Unit' not in cols:
-        cur.execute("ALTER TABLE Product ADD COLUMN Unit VARCHAR(20) DEFAULT 'шт.'")
-    
-    # Заполняем дефолтные значения для демонстрации подсветки экспертам
-    cur.execute("UPDATE Product SET SupplierID = (SELECT ID FROM Supplier LIMIT 1) WHERE SupplierID IS NULL")
-    cur.execute("UPDATE Product SET Quantity = 0 WHERE ID = 1")      # Проверка: остаток 0 -> голубой
-    cur.execute("UPDATE Product SET Discount = 20 WHERE ID = 2")     # Проверка: скидка >15% -> #2E8B57
-    cur.execute("UPDATE Product SET Discount = 5 WHERE ID = 3")      # Проверка: скидка <15% -> зачеркнутая цена
 
-    # 2. Таблица пунктов выдачи (PickupPoint) для заказов
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS PickupPoint (
-            ID INTEGER PRIMARY KEY AUTOINCREMENT,
-            Address TEXT NOT NULL
+def verify_password(plain_password: str, stored_hash: str) -> bool:
+    try:
+        salt, hash_val = stored_hash.split('$')
+        dk = hashlib.pbkdf2_hmac(
+            'sha256', plain_password.encode('utf-8'), bytes.fromhex(salt), 600000
         )
-    """)
-    cur.execute("SELECT COUNT(*) as cnt FROM PickupPoint")
-    if cur.fetchone()['cnt'] == 0:
-        cur.executemany("INSERT INTO PickupPoint (Address) VALUES (?)", [
-            ('г. Москва, ул. Ленина, д. 15',),
-            ('г. Санкт-Петербург, пр. Мира, д. 40',),
-            ('г. Казань, ул. Баумана, д. 7',)
-        ])
+        return secrets.compare_digest(dk.hex(), hash_val)
+    except Exception:
+        return False
 
-    # 3. Адаптация таблицы Order под Модуль 4
-    cur.execute("PRAGMA table_info(\"Order\")")
-    order_cols = [r['name'] for r in cur.fetchall()]
-    if 'Article' not in order_cols:
-        cur.execute("ALTER TABLE \"Order\" ADD COLUMN Article VARCHAR(50) DEFAULT 'ORD-101'")
-    if 'DeliveryDate' not in order_cols:
-        cur.execute("ALTER TABLE \"Order\" ADD COLUMN DeliveryDate DATE DEFAULT '2026-04-10'")
-    if 'PickupPointID' not in order_cols:
-        cur.execute("ALTER TABLE \"Order\" ADD COLUMN PickupPointID INTEGER DEFAULT 1 REFERENCES PickupPoint(ID)")
-    if 'ProductID' not in order_cols:
-        cur.execute("ALTER TABLE \"Order\" ADD COLUMN ProductID INTEGER REFERENCES Product(ID)")
 
-    conn.commit()
-    conn.close()
+# ---------------------------------------------------------------------------
+# ЗАЩИТА И ПРОВЕРКА РОЛЕЙ (RBAC)
+# ---------------------------------------------------------------------------
+def get_current_user(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith('Bearer '):
+        return None
+    token = authorization.split(' ')[1].strip()
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            SELECT u.ID, u.Login, u.LastName, u.FirstName, u.Patronymic, r.Title as RoleTitle
+            FROM UserSession s
+            JOIN "User" u ON u.ID = s.UserID
+            JOIN Role r ON r.ID = u.RoleID
+            WHERE s.Token = ?
+        """,
+            (token,),
+        )
+        user = cur.fetchone()
+        return dict(user) if user else None
+    finally:
+        conn.close()
 
-setup_db()
+
+def require_roles(allowed_roles: List[str]):
+    def dependency(user=Depends(get_current_user)):
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail='Требуется авторизация в системе для выполнения данного действия',
+            )
+        if user['RoleTitle'] not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f'Доступ запрещен: действие доступно только для ролей {", ".join(allowed_roles)}',
+            )
+        return user
+
+    return dependency
+
+
+@app.get('/favicon.ico', include_in_schema=False)
+def favicon():
+    return FileResponse(placeholder_path)
+
 
 # ---------------------------------------------------------------------------
 # АВТОРИЗАЦИЯ
 # ---------------------------------------------------------------------------
-class LoginIn(BaseModel):
+class LoginRequest(BaseModel):
     login: str
     password: str
 
+
 @app.post('/api/auth/login')
-def login(data: LoginIn):
+def login(data: LoginRequest):
     conn = get_conn()
     try:
-        cur = conn.cursor()
-        
-        # Резервный логин администратора для сдачи экзамена
-        if data.login == 'admin' and data.password == 'admin':
-            return {'id': 9999, 'fio': 'Сидоров Алексей Николаевич', 'role': 'Администратор'}
+        cur = conn.execute(
+            """
+            SELECT u.ID, u.PasswordHash, u.LastName, u.FirstName, u.Patronymic, r.Title as RoleTitle
+            FROM "User" u
+            JOIN Role r ON r.ID = u.RoleID
+            WHERE u.Login = ?
+        """,
+            (data.login.strip(),),
+        )
+        user = cur.fetchone()
+        if not user or not verify_password(data.password, user['PasswordHash']):
+            raise HTTPException(
+                status_code=401, detail='Неверный логин или пароль пользователя'
+            )
 
-        # Проверка в Организаторах (Администраторы)
-        cur.execute("SELECT ID, LastName, FirstName, Patronymic FROM Organizer WHERE (Email = ? OR ID = ?) AND Password = ?", 
-                    (data.login, data.login, data.password))
-        row = cur.fetchone()
-        if row:
-            fio = f"{row['LastName']} {row['FirstName']} {row['Patronymic'] or ''}".strip()
-            return {'id': row['ID'], 'fio': fio, 'role': 'Администратор'}
+        token = secrets.token_hex(32)
+        conn.execute(
+            'INSERT INTO UserSession (Token, UserID) VALUES (?, ?)',
+            (token, user['ID']),
+        )
+        conn.commit()
 
-        # Проверка в Модераторах (Менеджеры)
-        cur.execute("SELECT ID, LastName, FirstName, Patronymic FROM Moderator WHERE (Email = ? OR ID = ?) AND Password = ?", 
-                    (data.login, data.login, data.password))
-        row = cur.fetchone()
-        if row:
-            fio = f"{row['LastName']} {row['FirstName']} {row['Patronymic'] or ''}".strip()
-            return {'id': row['ID'], 'fio': fio, 'role': 'Менеджер'}
-
-        # Проверка в Участниках (Клиенты)
-        cur.execute("SELECT ID, LastName, FirstName, Patronymic FROM Member WHERE (Email = ? OR ID = ?) AND Password = ?", 
-                    (data.login, data.login, data.password))
-        row = cur.fetchone()
-        if row:
-            fio = f"{row['LastName']} {row['FirstName']} {row['Patronymic'] or ''}".strip()
-            return {'id': row['ID'], 'fio': fio, 'role': 'Клиент'}
-
-        raise HTTPException(401, 'Неверный логин или пароль')
+        fio = f"{user['LastName']} {user['FirstName']} {user['Patronymic'] or ''}".strip()
+        return {'token': token, 'fio': fio, 'role': user['RoleTitle']}
     finally:
         conn.close()
 
+
+@app.post('/api/auth/logout')
+def logout(user=Depends(get_current_user), authorization: str = Header(None)):
+    if authorization and authorization.startswith('Bearer '):
+        token = authorization.split(' ')[1].strip()
+        conn = get_conn()
+        try:
+            conn.execute('DELETE FROM UserSession WHERE Token = ?', (token,))
+            conn.commit()
+        finally:
+            conn.close()
+    return {'status': 'ok'}
+
+
 # ---------------------------------------------------------------------------
-# СПРАВОЧНИКИ
+# МЕТАДАННЫЕ
 # ---------------------------------------------------------------------------
 @app.get('/api/meta')
 def get_meta():
     conn = get_conn()
     try:
-        types = [dict(r) for r in conn.execute("SELECT ID, Title FROM ProductType ORDER BY Title").fetchall()]
-        suppliers = [dict(r) for r in conn.execute("SELECT ID, Title FROM Supplier ORDER BY Title").fetchall()]
-        points = [dict(r) for r in conn.execute("SELECT ID, Address FROM PickupPoint ORDER BY Address").fetchall()]
-        return {'product_types': types, 'suppliers': suppliers, 'pickup_points': points}
+        types = [
+            dict(r)
+            for r in conn.execute(
+                'SELECT ID, Title FROM ProductType ORDER BY Title'
+            ).fetchall()
+        ]
+        suppliers = [
+            dict(r)
+            for r in conn.execute(
+                'SELECT ID, Title FROM Supplier ORDER BY Title'
+            ).fetchall()
+        ]
+        points = [
+            dict(r)
+            for r in conn.execute(
+                'SELECT ID, Address FROM PickupPoint ORDER BY Address'
+            ).fetchall()
+        ]
+        return {
+            'product_types': types,
+            'suppliers': suppliers,
+            'pickup_points': points,
+        }
     finally:
         conn.close()
 
+
 # ---------------------------------------------------------------------------
-# СПИСОК ТОВАРОВ
+# ТОВАРЫ
 # ---------------------------------------------------------------------------
 @app.get('/api/products')
-def list_products(search: str = '', supplier_id: Optional[int] = None, sort_qty: Optional[str] = None):
+def list_products(
+    search: str = '',
+    supplier_id: Optional[int] = None,
+    sort_qty: Optional[str] = None,
+):
     conn = get_conn()
     try:
         sql = """
-            SELECT p.ID, p.Title, p.ArticleNumber, p.Description, p.Image,
+            SELECT p.ID, p.Title, p.ProductTypeID, p.ArticleNumber, p.Description, p.Image,
                    p.MinCostForAgent AS Price,
                    COALESCE(p.Quantity, 0) AS Quantity,
                    COALESCE(p.Discount, 0) AS Discount,
@@ -189,7 +214,7 @@ def list_products(search: str = '', supplier_id: Optional[int] = None, sort_qty:
         """
         params = []
         if search:
-            t = f"%{search}%"
+            term = f'%{search.strip()}%'
             sql += """ AND (
                 p.Title LIKE ? OR
                 p.ArticleNumber LIKE ? OR
@@ -198,27 +223,60 @@ def list_products(search: str = '', supplier_id: Optional[int] = None, sort_qty:
                 s.Title LIKE ? OR
                 p.Manufacturer LIKE ?
             )"""
-            params.extend([t] * 6)
+            params.extend([term] * 6)
 
         if supplier_id:
-            sql += " AND s.ID = ?"
+            sql += ' AND s.ID = ?'
             params.append(supplier_id)
 
         if sort_qty == 'asc':
-            sql += " ORDER BY p.Quantity ASC"
+            sql += ' ORDER BY p.Quantity ASC'
         elif sort_qty == 'desc':
-            sql += " ORDER BY p.Quantity DESC"
+            sql += ' ORDER BY p.Quantity DESC'
         else:
-            sql += " ORDER BY p.ID DESC"
+            sql += ' ORDER BY p.ID DESC'
 
         cur = conn.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
 
-# ---------------------------------------------------------------------------
-# CRUD ТОВАРОВ (Администратор)
-# ---------------------------------------------------------------------------
+
+def validate_and_save_image(file: UploadFile) -> str:
+    """Проверка типа, ограничение до 5 МБ, ресайз до 300х200, безопасное сохранение."""
+    allowed_types = ['image/jpeg', 'image/png', 'image/webp']
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            400,
+            f'Недопустимый формат файла {file.content_type}. Разрешены только JPEG, PNG, WEBP.',
+        )
+
+    file_bytes = file.file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            400, 'Размер изображения превышает допустимый предел 5 МБ.'
+        )
+
+    import io
+
+    try:
+        image = Image.open(io.BytesIO(file_bytes))
+        image.verify()  # Проверка целостности файла изображения
+        image = Image.open(io.BytesIO(file_bytes)).convert('RGB')
+    except (UnidentifiedImageError, Exception):
+        raise HTTPException(
+            400,
+            'Переданный файл повреждён или не является корректным изображением.',
+        )
+
+    # Требование: оптимальный размер 300х200
+    resized_img = image.resize((300, 200), Image.Resampling.LANCZOS)
+    filename = f'prod_{secrets.token_hex(8)}.jpg'
+    safe_path = os.path.join(UPLOADS_DIR, filename)
+    resized_img.save(safe_path, 'JPEG', quality=85)
+    return filename
+
+
 @app.post('/api/products')
 def save_product(
     id: Optional[int] = Form(None),
@@ -232,91 +290,154 @@ def save_product(
     quantity: int = Form(...),
     discount: float = Form(0.0),
     description: str = Form(''),
-    photo: Optional[UploadFile] = File(None)
+    photo: Optional[UploadFile] = File(None),
+    current_user=Depends(require_roles(['Администратор'])),
 ):
     if price < 0:
-        raise HTTPException(400, 'Стоимость не может быть отрицательной')
+        raise HTTPException(400, 'Стоимость товара не может быть отрицательной.')
     if quantity < 0:
-        raise HTTPException(400, 'Количество не может быть отрицательным')
+        raise HTTPException(
+            400, 'Количество товара на складе не может быть отрицательным.'
+        )
     if not (0 <= discount <= 100):
-        raise HTTPException(400, 'Скидка должна быть в диапазоне от 0 до 100%')
+        raise HTTPException(
+            400, 'Размер действующей скидки должен находиться в диапазоне от 0 до 100%.'
+        )
 
     conn = get_conn()
     try:
         cur = conn.cursor()
-        photo_filename = None
 
+        # Проверка уникальности артикула
+        cur.execute(
+            'SELECT ID FROM Product WHERE ArticleNumber = ? AND (? IS NULL OR ID != ?)',
+            (article, id, id),
+        )
+        if cur.fetchone():
+            raise HTTPException(
+                400, f'Товар с артикулом "{article}" уже существует в системе.'
+            )
+
+        new_photo_name = None
         if photo and photo.filename:
-            import time
-            ext = os.path.splitext(photo.filename)[1].lower() or '.png'
-            filename = f"prod_{int(time.time()*1000)}{ext}"
-            file_path = os.path.join(UPLOADS_DIR, filename)
-
-            # Требование задания: ограничение 300х200
-            image = Image.open(photo.file).convert('RGB')
-            image = image.resize((300, 200), Image.Resampling.LANCZOS)
-            image.save(file_path)
-            photo_filename = filename
+            new_photo_name = validate_and_save_image(photo)
 
         if id is None:
-            # Новая запись: ID вычисляется автоматически +1 в БД
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO Product (ArticleNumber, Title, ProductTypeID, Manufacturer, SupplierID,
                                     MinCostForAgent, Unit, Quantity, Discount, Description, Image)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (article, title, category_id, manufacturer, supplier_id, price, unit, quantity, discount, description, photo_filename or ''))
+            """,
+                (
+                    article,
+                    title,
+                    category_id,
+                    manufacturer,
+                    supplier_id,
+                    price,
+                    unit,
+                    quantity,
+                    discount,
+                    description,
+                    new_photo_name or '',
+                ),
+            )
         else:
-            cur.execute("SELECT Image FROM Product WHERE ID = ?", (id,))
+            cur.execute('SELECT Image FROM Product WHERE ID = ?', (id,))
             row = cur.fetchone()
             if not row:
-                raise HTTPException(404, 'Товар не найден')
+                raise HTTPException(404, 'Редактируемый товар не найден.')
 
             current_img = row['Image']
-            # При замене изображения удаляем старое из папки
-            if photo_filename:
-                if current_img:
+            if new_photo_name:
+                if (
+                    current_img
+                    and current_img != 'picture.png'
+                    and os.path.basename(current_img) == current_img
+                ):
                     old_path = os.path.join(UPLOADS_DIR, current_img)
-                    if os.path.exists(old_path) and current_img != 'picture.png':
-                        os.remove(old_path)
-                current_img = photo_filename
+                    if os.path.exists(old_path):
+                        try:
+                            os.remove(old_path)
+                        except OSError:
+                            pass
+                current_img = new_photo_name
 
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE Product
                 SET ArticleNumber = ?, Title = ?, ProductTypeID = ?, Manufacturer = ?,
                     SupplierID = ?, MinCostForAgent = ?, Unit = ?, Quantity = ?,
                     Discount = ?, Description = ?, Image = ?
                 WHERE ID = ?
-            """, (article, title, category_id, manufacturer, supplier_id, price, unit, quantity, discount, description, current_img, id))
+            """,
+                (
+                    article,
+                    title,
+                    category_id,
+                    manufacturer,
+                    supplier_id,
+                    price,
+                    unit,
+                    quantity,
+                    discount,
+                    description,
+                    current_img,
+                    id,
+                ),
+            )
 
         conn.commit()
         return {'status': 'ok'}
     finally:
         conn.close()
+
 
 @app.delete('/api/products/{product_id}')
-def delete_product(product_id: int):
+def delete_product(
+    product_id: int, current_user=Depends(require_roles(['Администратор']))
+):
     conn = get_conn()
     try:
-        # Проверка: товар, присутствующий в заказе, удалить нельзя!
-        cur = conn.execute("SELECT COUNT(*) as cnt FROM \"Order\" WHERE ProductID = ?", (product_id,))
+        # Проверка ТЗ: Товар, который присутствует в заказе, удалить нельзя
+        cur = conn.execute(
+            'SELECT COUNT(*) as cnt FROM "Order" WHERE ProductID = ?',
+            (product_id,),
+        )
         if cur.fetchone()['cnt'] > 0:
-            raise HTTPException(400, 'Невозможно удалить: товар присутствует в заказе!')
+            raise HTTPException(
+                400,
+                'Запрещено удалять товар: он фигурирует в оформленных заказах пользователей.',
+            )
 
-        cur.execute("SELECT Image FROM Product WHERE ID = ?", (product_id,))
+        cur.execute('SELECT Image FROM Product WHERE ID = ?', (product_id,))
         row = cur.fetchone()
-        if row and row['Image']:
-            p = os.path.join(UPLOADS_DIR, row['Image'])
-            if os.path.exists(p) and row['Image'] != 'picture.png':
-                os.remove(p)
+        if not row:
+            raise HTTPException(404, 'Товар не найден.')
 
-        conn.execute("DELETE FROM Product WHERE ID = ?", (product_id,))
+        img_name = row['Image']
+        if (
+            img_name
+            and img_name != 'picture.png'
+            and os.path.basename(img_name) == img_name
+        ):
+            old_path = os.path.join(UPLOADS_DIR, img_name)
+            if os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    pass
+
+        conn.execute('DELETE FROM Product WHERE ID = ?', (product_id,))
         conn.commit()
         return {'status': 'ok'}
     finally:
         conn.close()
 
+
 # ---------------------------------------------------------------------------
-# ЗАКАЗЫ (Модуль 4)
+# ЗАКАЗЫ (Менеджер / Администратор)
 # ---------------------------------------------------------------------------
 class OrderIn(BaseModel):
     id: Optional[int] = None
@@ -327,15 +448,20 @@ class OrderIn(BaseModel):
     delivery_date: str
     product_id: Optional[int] = None
 
+
 @app.get('/api/orders')
-def list_orders():
+def list_orders(
+    current_user=Depends(require_roles(['Менеджер', 'Администратор'])),
+):
     conn = get_conn()
     try:
         sql = """
             SELECT o.ID, o.Article, o.Status, o.OrderDate, o.DeliveryDate,
-                   o.ProductID, p.Address AS PickupAddress
+                   o.ProductID, o.PickupPointID, p.Address AS PickupAddress,
+                   pr.Title AS ProductTitle
             FROM "Order" o
             LEFT JOIN PickupPoint p ON p.ID = o.PickupPointID
+            LEFT JOIN Product pr    ON pr.ID = o.ProductID
             ORDER BY o.ID DESC
         """
         cur = conn.execute(sql)
@@ -343,37 +469,68 @@ def list_orders():
     finally:
         conn.close()
 
+
 @app.post('/api/orders')
-def save_order(data: OrderIn):
+def save_order(
+    data: OrderIn,
+    current_user=Depends(require_roles(['Администратор'])),
+):
     conn = get_conn()
     try:
         cur = conn.cursor()
         if data.id is None:
-            cur.execute("""
-                INSERT INTO "Order" (Article, Status, PickupPointID, OrderDate, DeliveryDate, ProductID, MemberID, EventID, Quantity, TotalPrice)
-                VALUES (?, ?, ?, ?, ?, ?, 1, 1, 1, 0)
-            """, (data.article, data.status, data.pickup_point_id, data.order_date, data.delivery_date, data.product_id or 1))
+            cur.execute(
+                """
+                INSERT INTO "Order" (Article, Status, PickupPointID, OrderDate, DeliveryDate, ProductID)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    data.article,
+                    data.status,
+                    data.pickup_point_id,
+                    data.order_date,
+                    data.delivery_date,
+                    data.product_id,
+                ),
+            )
         else:
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE "Order"
                 SET Article = ?, Status = ?, PickupPointID = ?, OrderDate = ?, DeliveryDate = ?, ProductID = ?
                 WHERE ID = ?
-            """, (data.article, data.status, data.pickup_point_id, data.order_date, data.delivery_date, data.product_id, data.id))
+            """,
+                (
+                    data.article,
+                    data.status,
+                    data.pickup_point_id,
+                    data.order_date,
+                    data.delivery_date,
+                    data.product_id,
+                    data.id,
+                ),
+            )
         conn.commit()
         return {'status': 'ok'}
     finally:
         conn.close()
+
 
 @app.delete('/api/orders/{order_id}')
-def delete_order(order_id: int):
+def delete_order(
+    order_id: int,
+    current_user=Depends(require_roles(['Администратор'])),
+):
     conn = get_conn()
     try:
-        conn.execute("DELETE FROM \"Order\" WHERE ID = ?", (order_id,))
+        conn.execute('DELETE FROM "Order" WHERE ID = ?', (order_id,))
         conn.commit()
         return {'status': 'ok'}
     finally:
         conn.close()
 
+
+# Статические каталоги
 app.mount('/uploads', StaticFiles(directory=UPLOADS_DIR), name='uploads')
 if os.path.isdir(FRONTEND_DIR):
     app.mount('/', StaticFiles(directory=FRONTEND_DIR, html=True), name='static')

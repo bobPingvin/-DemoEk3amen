@@ -6,18 +6,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   Auth.initHeader();
   const user = Auth.get();
   if (user.role !== 'Менеджер' && user.role !== 'Администратор') {
-    alert('Доступ запрещен');
+    alert('Внимание: Доступ к разделу заказов разрешен только персоналу!');
     location.href = 'index.html';
     return;
   }
 
   if (user.role === 'Администратор') {
-    document.getElementById('btn-add-order').style.display = 'block';
+    const btn = document.getElementById('btn-add-order');
+    if (btn) btn.style.display = 'block';
   }
 
   const metaRes = await fetch('/api/meta');
   const meta = await metaRes.json();
-  pickupPoints = meta.pickup_points;
+  pickupPoints = meta.pickup_points || [];
 
   document.getElementById('order-point').innerHTML = pickupPoints
     .map(p => `<option value="${p.ID}">${p.Address}</option>`)
@@ -27,13 +28,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadOrders() {
-  const r = await fetch('/api/orders');
+  const r = await fetch('/api/orders', {
+    headers: Auth.getAuthHeaders()
+  });
+  if (!r.ok) {
+    alert('Ошибка при получении списка заказов');
+    return;
+  }
   allOrders = await r.json();
   const container = document.getElementById('orders-list');
   const user = Auth.get();
 
   if (!allOrders.length) {
-    container.innerHTML = '<p style="padding:20px;text-align:center;">Заказов нет</p>';
+    container.innerHTML = '<p style="padding:20px;text-align:center;">Заказов не зарегистрировано</p>';
     return;
   }
 
@@ -46,7 +53,7 @@ async function loadOrders() {
           <p><b>Статус:</b> ${o.Status}</p>
         </div>
         <div>
-          <p><b>Адрес ПВЗ:</b> ${o.PickupAddress}</p>
+          <p><b>Пункт выдачи:</b> ${o.PickupAddress || '—'}</p>
         </div>
         <div>
           <p>📅 <b>Заказ:</b> ${o.OrderDate}</p>
@@ -73,7 +80,8 @@ function openOrderModal(id = null) {
       document.getElementById('order-id').value = o.ID;
       document.getElementById('order-article').value = o.Article;
       document.getElementById('order-status').value = o.Status;
-      document.getElementById('order-point').value = o.PickupPointID;
+      // Корректное восстановление ПВЗ
+      document.getElementById('order-point').value = o.PickupPointID || (pickupPoints[0] ? pickupPoints[0].ID : '');
       document.getElementById('order-date').value = o.OrderDate;
       document.getElementById('order-delivery').value = o.DeliveryDate;
     }
@@ -104,13 +112,13 @@ async function saveOrder(e) {
 
   const r = await fetch('/api/orders', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: Auth.getAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload)
   });
 
   if (!r.ok) {
-    const err = await r.json();
-    alert('Ошибка: ' + (err.detail || 'Не удалось сохранить'));
+    const err = await r.json().catch(() => ({}));
+    alert('Предупреждение: ' + (err.detail || 'Не удалось сохранить заказ'));
     return;
   }
 
@@ -119,10 +127,14 @@ async function saveOrder(e) {
 }
 
 async function deleteCurrentOrder() {
-  if (!confirm('Удалить данный заказ?')) return;
-  const r = await fetch(`/api/orders/${currentOrderId}`, { method: 'DELETE' });
+  if (!confirm('Вы действительно уверены, что хотите удалить заказ?')) return;
+  const r = await fetch(`/api/orders/${currentOrderId}`, {
+    method: 'DELETE',
+    headers: Auth.getAuthHeaders()
+  });
   if (!r.ok) {
-    alert('Ошибка удаления');
+    const err = await r.json().catch(() => ({}));
+    alert('Ошибка: ' + (err.detail || 'Не удалось удалить заказ'));
     return;
   }
   closeOrderModal();
