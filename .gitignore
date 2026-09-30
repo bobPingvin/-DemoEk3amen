@@ -1,3 +1,9 @@
 echo "__pycache__/" > .gitignore
 echo "*.pyc" >> .gitignore
 echo ".DS_Store" >> .gitignore
+venv/
+.venv/
+backend/venv/
+__pycache__/
+*.pyc
+.DS_Store

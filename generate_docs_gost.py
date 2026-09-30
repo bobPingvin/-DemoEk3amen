@@ -1,171 +1,192 @@
-"""Генерация PDF документа со схемой алгоритма по ГОСТ 19.701-90."""
-
+"""
+Генератор блок-схемы алгоритма по ГОСТ 19.701-90.
+Текст и линии строго черного цвета (не сливаются с фоном).
+"""
 import os
 from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen import canvas
 
-
-def register_cyrillic_font():
-    """Поиск и регистрация системного TrueType шрифта с поддержкой кириллицы."""
-    font_paths = [
+def get_cyrillic_font():
+    paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf"
     ]
-    for path in font_paths:
-        if os.path.exists(path):
+    for p in paths:
+        if os.path.exists(p):
             try:
-                pdfmetrics.registerFont(TTFont("CustomFont", path))
-                return "CustomFont"
+                pdfmetrics.registerFont(TTFont("GostFont", p))
+                return "GostFont"
             except Exception:
                 pass
     return "Helvetica"
 
-
 def draw_arrow(c, x1, y1, x2, y2):
-    """Рисование соединительной линии со стрелкой по ГОСТ 19.701-90."""
+    c.saveState()
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setFillColorRGB(0, 0, 0)
     c.line(x1, y1, x2, y2)
-    # Наконечник стрелки через path
+    
     p = c.beginPath()
-    if x1 == x2:  # Вертикальная линия вниз
+    if x1 == x2:  # Линия вертикально вниз
         p.moveTo(x2, y2)
         p.lineTo(x2 - 4, y2 + 8)
         p.lineTo(x2 + 4, y2 + 8)
-    elif y1 == y2:  # Горизонтальная линия вправо
+    elif y1 == y2 and x2 > x1:  # Линия вправо
         p.moveTo(x2, y2)
         p.lineTo(x2 - 8, y2 - 4)
         p.lineTo(x2 - 8, y2 + 4)
+    elif y1 == y2 and x2 < x1:  # Линия влево
+        p.moveTo(x2, y2)
+        p.lineTo(x2 + 8, y2 - 4)
+        p.lineTo(x2 + 8, y2 + 4)
     p.close()
     c.drawPath(p, stroke=1, fill=1)
+    c.restoreState()
 
-
-def draw_flowchart_pdf(filename="ГОСТ_19.701_90_Алгоритм.pdf"):
-    c = canvas.Canvas(filename, pagesize=A4)
+def generate_pdf():
+    pdf_path = "ГОСТ_19.701_90_Алгоритм.pdf"
+    c = canvas.Canvas(pdf_path, pagesize=A4)
     width, height = A4
-    font_name = register_cyrillic_font()
+    f = get_cyrillic_font()
 
-    is_cyrillic = font_name != "Helvetica"
-
-    # Заголовок документа
-    c.setFont(font_name, 14)
-    title = (
-        "Схема алгоритма работы системы (ГОСТ 19.701-90)"
-        if is_cyrillic
-        else "Algoritm raboty sistemy (GOST 19.701-90)"
-    )
-    c.drawCentredString(width / 2, height - 50, title)
-
-    c.setFont(font_name, 10)
-    sub = (
-        "Процесс авторизации и разграничения прав доступа"
-        if is_cyrillic
-        else "Protsess avtorizatsii i razgranicheniya prav dostupa"
-    )
-    c.drawCentredString(width / 2, height - 68, sub)
-
+    # Явно задаем базовые цвета: обводка черная, заливка для текста черная
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setFillColorRGB(0, 0, 0)
     c.setLineWidth(1.2)
 
-    # 1. Символ «Пуск / Останов» (Терминатор) - скругленный прямоугольник
-    c.roundRect(220, height - 130, 160, 36, 12, stroke=1, fill=0)
-    t1 = "Начало работы" if is_cyrillic else "Nachalo raboty"
-    c.drawCentredString(300, height - 110, t1)
+    # Заголовок
+    c.setFont(f, 13)
+    c.drawCentredString(width / 2, height - 35, "СХЕМА АЛГОРИТМА СИСТЕМЫ (ГОСТ 19.701-90)")
+    c.setFont(f, 9)
+    c.drawCentredString(width / 2, height - 48, "Процесс разграничения прав (RBAC), каталога и управления заказами")
 
-    # Линия к вводу данных
-    draw_arrow(c, 300, height - 130, 300, height - 165)
+    cx = width / 2
 
-    # 2. Символ «Данные» (Параллелограмм) - Ввод учетных данных
-    p_data = c.beginPath()
-    p_data.moveTo(225, height - 200)
-    p_data.lineTo(395, height - 200)
-    p_data.lineTo(375, height - 165)
-    p_data.lineTo(205, height - 165)
-    p_data.close()
-    c.drawPath(p_data, stroke=1, fill=0)
-    t2 = (
-        "Ввод логина и пароля" if is_cyrillic else "Vvod logina i parolya"
-    )
-    c.drawCentredString(300, height - 186, t2)
+    # Функция вывода текста с принудительным черным цветом
+    def draw_text(x, y, text, size=9, center=True):
+        c.saveState()
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont(f, size)
+        if center:
+            c.drawCentredString(x, y, text)
+        else:
+            c.drawString(x, y, text)
+        c.restoreState()
 
-    # Линия к первому условию
-    draw_arrow(c, 300, height - 200, 300, height - 235)
+    # 1. Пуск (Терминатор)
+    c.roundRect(cx - 70, height - 90, 140, 28, 10, stroke=1, fill=0)
+    draw_text(cx, height - 78, "Пуск (Старт)", size=10)
+    draw_arrow(c, cx, height - 90, cx, height - 115)
 
-    # 3. Символ «Решение» (Ромб) - Проверка валидности
-    p_dec1 = c.beginPath()
-    p_dec1.moveTo(300, height - 235)
-    p_dec1.lineTo(385, height - 265)
-    p_dec1.lineTo(300, height - 295)
-    p_dec1.lineTo(215, height - 265)
-    p_dec1.close()
-    c.drawPath(p_dec1, stroke=1, fill=0)
-    t3 = (
-        "Успешный вход?" if is_cyrillic else "Uspeshny vhod?"
-    )
-    c.drawCentredString(300, height - 269, t3)
+    # 2. Ввод учетных данных (Параллелограмм)
+    p = c.beginPath()
+    p.moveTo(cx - 85, height - 145)
+    p.lineTo(cx + 85, height - 145)
+    p.lineTo(cx + 65, height - 115)
+    p.lineTo(cx - 105, height - 115)
+    p.close()
+    c.drawPath(p, stroke=1, fill=0)
+    draw_text(cx - 10, height - 134, "Ввод логина / пароля или Гость", size=9)
+    draw_arrow(c, cx, height - 145, cx, height - 175)
 
-    # Ветка НЕТ (Ошибка -> возвращение к вводу данных)
-    c.drawString(392, height - 260, "Нет" if is_cyrillic else "Net")
-    c.line(385, height - 265, 450, height - 265)
-    c.line(450, height - 265, 450, height - 182)
-    draw_arrow(c, 450, height - 182, 385, height - 182)
+    # 3. Ромб: Проверка входа
+    pr1 = c.beginPath()
+    pr1.moveTo(cx, height - 175)
+    pr1.lineTo(cx + 85, height - 195)
+    pr1.lineTo(cx, height - 215)
+    pr1.lineTo(cx - 85, height - 195)
+    pr1.close()
+    c.drawPath(pr1, stroke=1, fill=0)
+    draw_text(cx, height - 198, "Успешный вход?", size=9)
 
-    # Ветка ДА (переход к проверке роли)
-    c.drawString(306, height - 308, "Да" if is_cyrillic else "Da")
-    draw_arrow(c, 300, height - 295, 300, height - 335)
+    # Ветка Нет (Ошибка входа)
+    draw_text(cx + 92, height - 190, "Нет", size=9, center=False)
+    c.line(cx + 85, height - 195, cx + 170, height - 195)
+    c.line(cx + 170, height - 195, cx + 170, height - 130)
+    draw_arrow(c, cx + 170, height - 130, cx + 75, height - 130)
 
-    # 4. Символ «Решение» (Ромб) - Проверка роли (Администратор?)
-    p_dec2 = c.beginPath()
-    p_dec2.moveTo(300, height - 335)
-    p_dec2.lineTo(395, height - 365)
-    p_dec2.lineTo(300, height - 395)
-    p_dec2.lineTo(205, height - 365)
-    p_dec2.close()
-    c.drawPath(p_dec2, stroke=1, fill=0)
-    t4 = "Роль = Администратор?" if is_cyrillic else "Rol = Administrator?"
-    c.drawCentredString(300, height - 369, t4)
+    # Ветка Да
+    draw_text(cx + 5, height - 227, "Да", size=9, center=False)
+    draw_arrow(c, cx, height - 215, cx, height - 245)
 
-    # Ветка ДА (Администратор) -> вправо
-    c.drawString(402, height - 360, "Да" if is_cyrillic else "Da")
-    c.line(395, height - 365, 470, height - 365)
-    draw_arrow(c, 470, height - 365, 470, height - 430)
+    # 4. Процесс: Каталог товаров
+    c.rect(cx - 85, height - 280, 170, 35, stroke=1, fill=0)
+    draw_text(cx, height - 263, "Загрузка товаров из БД,", size=9)
+    draw_text(cx, height - 275, "подсветка скидок и остатков", size=9)
+    draw_arrow(c, cx, height - 280, cx, height - 305)
 
-    # Символ «Процесс» (Прямоугольник) - Полный доступ
-    c.rect(395, height - 475, 150, 45, stroke=1, fill=0)
-    t_adm1 = "Доступ к CRUD товаров" if is_cyrillic else "Dostup k CRUD tovarov"
-    t_adm2 = "и управлению заказами" if is_cyrillic else "i zakazam (polny)"
-    c.drawCentredString(470, height - 452, t_adm1)
-    c.drawCentredString(470, height - 466, t_adm2)
+    # 5. Ромб: Администратор?
+    pr2 = c.beginPath()
+    pr2.moveTo(cx, height - 305)
+    pr2.lineTo(cx + 95, height - 330)
+    pr2.lineTo(cx, height - 355)
+    pr2.lineTo(cx - 95, height - 330)
+    pr2.close()
+    c.drawPath(pr2, stroke=1, fill=0)
+    draw_text(cx, height - 333, "Администратор?", size=9)
 
-    # Ветка НЕТ (Клиент / Гость) -> прямо вниз
-    c.drawString(306, height - 408, "Нет" if is_cyrillic else "Net")
-    draw_arrow(c, 300, height - 395, 300, height - 430)
+    # Ветка Да -> Админ
+    draw_text(cx + 102, height - 325, "Да", size=9, center=False)
+    c.line(cx + 95, height - 330, cx + 160, height - 330)
+    draw_arrow(c, cx + 160, height - 330, cx + 160, height - 375)
 
-    # Символ «Процесс» (Прямоугольник) - Ограниченный доступ
-    c.rect(220, height - 475, 160, 45, stroke=1, fill=0)
-    t_usr1 = "Просмотр каталога," if is_cyrillic else "Prosmotr kataloga,"
-    t_usr2 = "поиск и фильтрация" if is_cyrillic else "poisk i filtratsiya"
-    c.drawCentredString(300, height - 452, t_usr1)
-    c.drawCentredString(300, height - 466, t_usr2)
+    c.rect(cx + 85, height - 425, 150, 50, stroke=1, fill=0)
+    draw_text(cx + 160, height - 398, "CRUD товаров (300х200)", size=8.5)
+    draw_text(cx + 160, height - 412, "и полный доступ к Заказам", size=8.5)
 
-    # Слияние потоков к концу
-    c.line(470, height - 475, 470, height - 515)
-    c.line(470, height - 515, 300, height - 515)
-    c.line(300, height - 475, 300, height - 515)
-    draw_arrow(c, 300, height - 515, 300, height - 545)
+    # Ветка Нет -> Менеджер?
+    draw_text(cx - 135, height - 325, "Нет", size=9, center=False)
+    c.line(cx - 95, height - 330, cx - 160, height - 330)
+    draw_arrow(c, cx - 160, height - 330, cx - 160, height - 375)
 
-    # 5. Символ «Пуск / Останов» (Терминатор) - Завершение работы
-    c.roundRect(220, height - 580, 160, 35, 12, stroke=1, fill=0)
-    t_end = "Конец работы" if is_cyrillic else "Konets raboty"
-    c.drawCentredString(300, height - 560, t_end)
+    # 6. Ромб: Менеджер?
+    pr3 = c.beginPath()
+    pr3.moveTo(cx - 160, height - 375)
+    pr3.lineTo(cx - 85, height - 400)
+    pr3.lineTo(cx - 160, height - 425)
+    pr3.lineTo(cx - 235, height - 400)
+    pr3.close()
+    c.drawPath(pr3, stroke=1, fill=0)
+    draw_text(cx - 160, height - 403, "Менеджер?", size=9)
+
+    # Ветка Да (Менеджер)
+    draw_text(cx - 75, height - 395, "Да", size=9, center=False)
+    c.line(cx - 85, height - 400, cx - 30, height - 400)
+    draw_arrow(c, cx - 30, height - 400, cx - 30, height - 455)
+
+    c.rect(cx - 100, height - 495, 140, 40, stroke=1, fill=0)
+    draw_text(cx - 30, height - 472, "Каталог + Просмотр", size=8.5)
+    draw_text(cx - 30, height - 485, "модуля Заказов", size=8.5)
+
+    # Ветка Нет (Клиент / Гость)
+    draw_text(cx - 245, height - 395, "Нет", size=9, center=False)
+    c.line(cx - 235, height - 400, cx - 270, height - 400)
+    draw_arrow(c, cx - 270, height - 400, cx - 270, height - 455)
+
+    c.rect(cx - 340, height - 495, 140, 40, stroke=1, fill=0)
+    draw_text(cx - 270, height - 472, "Только просмотр каталога,", size=8.5)
+    draw_text(cx - 270, height - 485, "поиск и фильтрация", size=8.5)
+
+    # Слияние
+    c.line(cx + 160, height - 425, cx + 160, height - 525)
+    c.line(cx - 30, height - 495, cx - 30, height - 525)
+    c.line(cx - 270, height - 495, cx - 270, height - 525)
+    c.line(cx - 270, height - 525, cx + 160, height - 525)
+    draw_arrow(c, cx, height - 525, cx, height - 555)
+
+    # 7. Останов (Терминатор)
+    c.roundRect(cx - 70, height - 590, 140, 28, 10, stroke=1, fill=0)
+    draw_text(cx, height - 578, "Останов (Выход)", size=10)
 
     c.showPage()
     c.save()
-    print(f"Документ {filename} успешно сгенерирован!")
-
+    print("ГОСТ_19.701_90_Алгоритм.pdf успешно перегенерирован с четким черным шрифтом!")
 
 if __name__ == "__main__":
-    draw_flowchart_pdf()
+    generate_pdf()
